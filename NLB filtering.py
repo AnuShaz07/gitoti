@@ -73,4 +73,4 @@ schema_version: 20180708
 name: nlb-allowlist-filter
 runtime: python
 entrypoint: func.handler
-timeout: 120   # well under the 5-minute cap
+timeout: 120   # well under the 5-minute 
