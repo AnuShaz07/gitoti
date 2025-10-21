@@ -187,3 +187,101 @@ def filter_and_transform_metrics(messages: list) -> list:
 
     logging.info(f"Filtered {len(filtered_metrics)} metrics from {len(messages)} total messages")
     return filtered_metrics
+
+def _read_all_messages():
+    """
+    Read all available messages from the stream until no more messages are available.
+    Returns a list of all messages read.
+    """
+    all_messages = []
+    cursor = None
+    
+    try:
+        cursor = _create_group_cursor()
+        logging.info("Created group cursor, starting to read messages...")
+    except Exception as e:
+        logging.error("create_group_cursor failed: %s", e, exc_info=True)
+        return []
+    
+    batch_count = 0
+    total_read = 0
+    
+    while True:
+        try:
+            # Read a batch of messages
+            messages, next_cursor = _get_messages(cursor, limit=MAX_READ)
+            
+            if not messages:
+                logging.info("No more messages available, stopping read")
+                break
+                
+            all_messages.extend(messages)
+            total_read += len(messages)
+            batch_count += 1
+            
+            logging.info(f"Read batch {batch_count}: {len(messages)} messages (total: {total_read})")
+            
+            # If we got fewer messages than the limit, we've reached the end
+            if len(messages) < MAX_READ:
+                logging.info("Received fewer messages than limit, reached end of stream")
+                break
+                
+            # Update cursor for next batch
+            if next_cursor:
+                cursor = next_cursor
+            else:
+                logging.info("No next cursor available, stopping read")
+                break
+                
+        except Exception as e:
+            logging.error("Error reading messages batch %d: %s", batch_count + 1, e, exc_info=True)
+            break
+    
+    logging.info(f"Finished reading: {batch_count} batches, {total_read} total messages")
+    return all_messages
+
+# ---------------- Handler ----------------
+def handler(event, context):
+    if PRODUCER is None or STREAM_CLIENT is None:
+        return {"statusCode": 500, "body": "{\"error\":\"client_init_failed\"}"}
+
+    # Read all available messages
+    all_messages = _read_all_messages()
+    
+    if not all_messages:
+        return {"statusCode": 200, "body": "{\"status\":\"empty\"}"}
+
+    # Parse all messages
+    parsed_messages = []
+    for m in all_messages:
+        try:
+            payload = base64.b64decode(m.value) if isinstance(m.value, str) else m.value
+            import json
+            message_data = json.loads(payload)
+            parsed_messages.append(message_data)
+        except Exception as e:
+            logging.warning(f"Failed to parse message: {e}")
+            continue
+
+    # Filter and transform metrics
+    filtered_metrics = filter_and_transform_metrics(parsed_messages)
+    if not filtered_metrics:
+        return {"statusCode": 200, "body": "{\"status\":\"no_matching_metrics\"}"}
+
+    # Send all filtered metrics to Kafka
+    sent = 0
+    for filtered_metric in filtered_metrics:
+        try:
+            import json
+            payload = json.dumps(filtered_metric).encode("utf-8")
+            PRODUCER.send(BMQ_TOPIC, payload)
+            sent += 1
+        except Exception as e:
+            logging.error("produce_failed: %s", e, exc_info=True)
+
+    try:
+        PRODUCER.flush()
+    except Exception as e:
+        logging.warning("producer_flush_failed: %s", e, exc_info=True)
+
+    return {"statusCode": 200, "body": f"{{\"status\":\"ok\",\"read\":{len(all_messages)},\"sent\":{sent}}}"}
