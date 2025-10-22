@@ -31,3 +31,22 @@
         logging.info(f"  whitelisted_nlbs: {whitelisted_nlbs_norm}")
         logging.info(f"  whitelisted_metrics: {whitelisted_metrics_norm}")
         logging.info(f"  nlb_match: {is_nlb_whitelisted}, metric_match: {is_metric_whitelisted_flag}")
+
+
+
+# Try with TRIM_HORIZON as fallback if LATEST fails
+        try:
+            logging.info("Trying TRIM_HORIZON cursor as fallback...")
+            cursor = _create_group_cursor("TRIM_HORIZON")
+            logging.info("Created group cursor (TRIM_HORIZON), starting to read messages...")
+        except Exception as e2:
+            logging.error("TRIM_HORIZON cursor also failed: %s", e2, exc_info=True)
+
+
+ logging.info(f"Attempting to read messages with cursor: {cursor[:20]}...")
+
+
+logging.info("This could mean:")
+        logging.info("1. No new messages in the stream")
+        logging.info("2. Consumer group is not positioned correctly")
+        logging.info("3. Messages are in a different partition")
